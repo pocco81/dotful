@@ -1,0 +1,780 @@
+#!/bin/sh
+
+# trim trailing /
+ts() { [ "${1#"${1%?}"}" = "/" ] && printf "%s" "${1%?}" || printf "%s" "$1"; }
+
+# settings
+DOTMAN_SOURCE=$(ts "${DOTMAN_SOURCE:-"$HOME/.dots"}")
+DOTMAN_DESTINATION=$(ts "${DOTMAN_DESTINATION:-"$HOME"}")
+DOTMAN_PROFILE=$(ts "${DOTMAN_PROFILE:-"files"}")
+DOTMAN_REPLACE=$(ts "${DOTMAN_REPLACE:-"$HOME"}")
+DOTMAN_PROFILES_DIR=$(ts "${DOTMAN_PROFILES_DIR:-""}")
+
+# manual
+HELP="dotman - dotfiles manager written in POSIX shell
+
+About: manages dotfiles through profiles, which are directories that store the dotfiles.
+There is a local database (plain text file) that stores each entry's destination
+and alias.
+
+Usage: dotman <options> <option-arguments> [command] [operand] 
+
+Commands:
+  add\t\tadds files to the database and profile
+  \t\t  operand: RELATIVE_OR_ABS_PATH:OPTIONAL_ALIAS
+  remove\tremoves files from the database and profile
+  \t\t  operand: ENTRY
+  update\tupdate an entry in the database and profile
+  \t\t  operand: SEARCH(ENTRY):NEW_ALIAS?NEW_PATH
+  install\tinstalls particular files from the database or the entire profile
+  \t\t  operand: ENTRY or default: default profile
+  uninstall\tuninstalls particular files from the database or the entire profile
+  \t\t  operand: ENTRY or default: default profile
+  status\tchecks the status of database files and their respective installation destinations
+  \t\t  operand: PROFILE or default: default profile
+  move\t\tmoves entries from one profile to another (requires --another)
+  \t\t  operand: ENTRY or default: default profile
+  copy\t\tcopies entries from one profile to another (requires --another)
+  \t\t  operand: ENTRY or default: default profile
+  view\t\twrites the database file to STDOUT
+
+Options
+  -p,--profile [str]\t   specify an alternative profile
+  -s,--source [path]\t   specify an alternative source directory
+  -d,--destination [path]  specify an alternative destination directory
+  -r,--replace [path]\t   specify an alternative replacement string (used when adding files)
+  -a,--another [str]\t   set the \"destination\" profile for the 'move' and 'copy' operations
+  -c,--copy\t\t   copies files instead of symlinking them (only applicable to 'install')
+  -f,--force\t\t   force operations (i.e. install, uninstall, ...) 
+  -n,--dry-run\t\t   run without affecting the filesystem
+  -v,--verbose\t\t   enables verbosity
+  -h,--help\t\t   see this message
+
+Defaults:
+  DOTMAN_SOURCE\t\t=\t${DOTMAN_SOURCE}
+  DOTMAN_DESTINATION\t=\t${DOTMAN_DESTINATION}
+  DOTMAN_PROFILE\t=\t${DOTMAN_PROFILE}
+  DOTMAN_REPLACE\t=\t${DOTMAN_REPLACE}
+  DOTMAN_PROFILES_DIR\t=\t${DOTMAN_PROFILES_DIR}
+
+Note: when 'ENTRY' is mentioned in the Commands sections, it references either
+the path to the file within the profile or its alias, both of which are stored in the DB.
+"
+
+# runtime vars
+verbose=
+dry_run=
+force=
+max_recursions=4
+copy=
+nl="
+"
+
+### helpers
+
+log() { printf "%s\n" "$1" >&2; [ ! "$2" ] && exit 1; }
+
+vprint() { [ "$verbose" ] && printf "  + %s\n" "$1"; }
+
+print() { printf "%s\n" "$1"; }
+
+check_param() {
+	definition="${1%--*}"
+	if [ "$definition" = "" ]; then
+		definition="option-argument"
+	else
+		definition="operand"
+	fi
+	[ -z "$2" ] && 
+		log "ERROR: '$1' requires a non-empty $definition"
+}
+
+### utils
+
+# replace any matches of substring within string
+# source: https://stackoverflow.com/a/75037170
+replace() {
+    RIGHT=$1
+    buf=
+
+	while [ -n "$RIGHT" ]; do
+		LEFT=${RIGHT%%"$2"*}
+
+		if [ "$LEFT" = "$RIGHT" ]; then
+			buf=$buf$RIGHT
+			printf "%s" "$buf"; return
+		fi
+
+		buf=$buf$LEFT$3
+		RIGHT=${RIGHT#*"$2"}
+	done
+
+	printf "%s" "$buf"
+}
+
+_dirname() {
+	__dirname="$(replace "${1}" "${1##*/}" "")"
+	printf "%s" "$(ts "$__dirname")"
+}
+
+# return value of a symbolic link
+# source: https://medium.com/mkdir-awesome/posix-alternatives-for-readlink-21a4bfe0455c
+_readlink() {
+    [ "${1:-}" ] || return 1
+    max_symlinks=40
+    CDPATH='' # to avoid changing to an unexpected directory
+
+    target=$1
+    [ -e "${target%/}" ] || target=${1%"${1##*[!/]}"} # trim trailing slashes
+    [ -d "${target:-/}" ] && target="$target/"
+
+    cd -P . 2>/dev/null || return 1
+    while [ "$max_symlinks" -ge 0 ] && max_symlinks=$((max_symlinks - 1)); do
+        if [ ! "$target" = "${target%/*}" ]; then
+            case $target in
+            /*) cd -P "${target%/*}/" 2>/dev/null || break ;;
+            *) cd -P "./${target%/*}" 2>/dev/null || break ;;
+            esac
+            target=${target##*/}
+        fi
+
+        if [ ! -L "$target" ]; then
+            target="${PWD%/}${target:+/}${target}"
+            printf '%s\n' "${target:-/}"
+            return 0
+        fi
+        link=$(ls -dl -- "$target" 2>/dev/null) || break
+        target=${link#*" $target -> "}
+    done
+    return 1
+}
+
+### aiders
+
+# remove $DOTMAN_REPLACE
+_get_clean_file() {
+	file="$(ts "$1")"
+	printf "%s" "$(replace "$file" "${DOTMAN_REPLACE}/" "")"
+}
+
+# recursively delete empty dirs
+_recursive_rm() {
+	dir="$1"
+	end_dir="$2"
+	cd "$dir" || return
+
+	recursions_counter=0
+	while [ "$dir" != "$end_dir" ]; do
+		file_count=0
+		recursions_counter=$((recursions_counter+1))
+
+		for f in "$dir"/* "$dir"/.*; do
+			[ "${f##*/}" = "." ] || \
+			[ "${f##*/}" = ".." ] || \
+			[ "$f" = "${dir}/*" ] || \
+			[ "$f" = "${dir}/.*" ] && continue
+
+			file_count=$((file_count+1))	
+		done
+
+		if [ "$file_count" = 0 ]; then
+			cd ..
+			rm ${force} -r "$dir"
+			dir="$(pwd)"
+		fi
+
+		[ "${max_recursions}" = "${recursions_counter}" ] && break
+	done
+}
+
+### core
+
+query() {
+	op=$1 # operation: find, insert, query, update, delete
+	target=$2 # update|find: search term (alias/path), * (alias)
+	entry=$3 # update: (alias), entry: "alias"/"path", * (path)
+	holder=$4 # update: (path)
+
+	# possible queries:
+	# [ name ]: [ desc ] -> [ expected arguments ]
+	# note: "opt_" means optional. Also, 
+
+	# find: gets relative (to profile) path -> $target
+	# insert: inserts alias + path -> $target $entry
+	# update: updates alias and path -> $target opt_$entry opt_$holder
+	# delete: delete entry from relative (to profile) path -> $entry
+
+	found_profile=
+	buffer=
+	performed=
+	occurrences=
+	# prev_line=
+	NL="$nl"
+	SPACE=" "
+	while read -r alias path; do
+		[ "$found_profile" ] && [ ! "$performed" ] && {
+			case "$op" in
+				find)
+					[ "$path" = "" ] && continue
+					[ "$alias" = "$target" ] || [ "$path" = "$target" ] && {
+						if [ "$entry" = "alias" ]; then
+							printf "%s" "$alias"
+						else
+							printf "%s" "$path"
+						fi
+						return
+					}
+				;;
+				insert|update)
+					_target="$(if [ "$op" = "insert" ]; then print "$target"; elif [ "$entry" ]; then print "$entry"; else print " "; fi)"
+					case "$alias" in # $alias begins with $target
+						"$_target"*)
+							case "$(replace "$alias" "$_target" "")" in
+								*[a-zA-Z]*) ;;
+								*) occurrences=$((occurrences+1));;
+							esac
+						;;
+					esac
+
+					if  [ "$op" = "insert" ] && [ "$path" = "$entry" ]; then
+						performed=true
+					else
+						if [ "$op" = "insert" ] && [ "$alias" = "" ] && [ "$path" = "" ]; then
+							alias="$target$occurrences"
+							path="$entry$nl"
+							performed=true
+						elif [ "$op" = "update" ] && { [ "$alias" = "$target" ] || [ "$path" = "$target" ]; }; then
+							[ "$entry" ] && alias="$entry$occurrences"
+							[ "$holder" ] && path="$holder"
+							performed=true
+						elif [ "$alias" = "" ] && [ "$path" = "" ]; then
+							performed=true
+						fi
+					fi
+				;;
+				delete)
+					if [ "$path" != "" ]; then
+						if { [ "$alias" = "$target" ] && [ "$target" != "" ]; } || \
+							[ "$path" = "$entry" ]; then
+							alias=""
+							path=""
+							NL=""
+							SPACE=""
+							performed=true
+						fi
+					fi
+				;;
+			esac
+		}
+
+		[ ! "$found_profile" ] && \
+		[ "$alias" = "${DOTMAN_PROFILE}" ] && \
+		found_profile=true
+
+		buffer="$buffer$alias$SPACE$path$NL"
+		NL="$nl"
+		SPACE=" "
+	done << EOF
+$TMP_DOTMAN_DB
+EOF
+
+	[ "$op" = "find" ] && return
+
+	# swallow trailing newlines near EOF
+	while [ "${buffer#"${buffer%?}"}" = "${nl}" ]; do
+		buffer="${buffer%"$nl"}"
+		buffer="${buffer%" "}"
+	done
+
+	if [ "$op" = "insert" ] && [ ! "$found_profile" ]; then
+		[ "$buffer" != "" ] && buffer="$buffer$nl$nl"
+		buffer="${buffer}${DOTMAN_PROFILE}$nl$target $entry"
+	fi
+
+	buffer="$buffer$nl$nl"
+
+	TMP_DOTMAN_DB="$buffer"
+}
+
+uninstall() {
+	if [ "$2" ]; then # assume path was read from db file already
+		path="$(ts "$2")"
+	else
+		path="$(query "find" "$(ts "$1")")"
+		[ ! "$path" ] && { log "  ERROR: there is no '$(ts "$1")' within the database" 0; return; }
+	fi
+
+	dest="${DOTMAN_DESTINATION:?}/${path}"
+	[ ! -e "$dest"  ] && { log "  WARN: destination file '$dest' not found" 0; return; }
+
+	vprint "target: $dest"
+
+	[ ! "$dry_run" ] && {
+		if [ -L "$dest" ]; then
+			rm ${force} "$dest"
+		else 
+			rm -r ${force} "$dest"
+		fi
+
+		_recursive_rm "$(_dirname "$dest")" "$DOTMAN_DESTINATION"
+	}
+}
+
+install() {
+	if [ "$2" ]; then # assume path was read from db file already
+		path="$(ts "$2")"
+	else
+		path="$(query "find" "$(ts "$1")")"
+		[ ! "$path" ] && { log "  ERROR: there is no '$(ts "$1")' within the database" 0; return; }
+	fi
+
+	src="$PROFILE_DIR/${path}"
+	[ ! -e "$src" ] && {
+		log "  ERROR: there is no '$path' within the profile. Cleaning it up from the db" 0
+		[ ! "$dry_run" ] && query "delete" "" "$path"
+		return
+	}
+
+	dest="${DOTMAN_DESTINATION:?}/${path}"
+	[ ! -e "$(_dirname "$dest")" ] && mkdir -p "$(_dirname "$dest")"
+
+	vprint "source: $src"
+	vprint "destination: $dest"
+
+
+	[ ! "$dry_run" ] && {
+		[ "$force" ] && {
+			if [ -L "$dest" ]; then
+				rm ${force} "$dest"
+			else 
+				rm -r ${force} "$dest"
+			fi
+		}
+
+		[ ! "$force" ] && [ -e "$dest" ] && \
+			{ log "  ERROR: there is already a file at desination '$dest'. Try using --force" 0; return; }
+
+		if [ "$copy" ]; then
+			cp -r "$src" "$dest"
+		else
+			ln -s "$src" "$dest"
+		fi
+	}
+}
+
+update() {
+	entry="$1"
+
+	search=${entry%\?*}
+	search="$(ts "${search%:*}")"
+
+	alias=${entry#*:}
+	alias="$(ts "${alias%\?*}")"
+
+	path="$(ts "${entry#*\?}")"
+
+	[ "$alias" = "$entry" ] || [ "$alias" = "$search" ] && alias=""
+	[ "$path" = "$entry" ] && path=""
+
+	[ ! "$search" ] && { log "  ERROR: missing search pattern" 0; return; }
+	[ !  "$alias" ] && [ ! "$path" ] && { log "  ERROR: missing values to update" 0; return; }
+
+	# early return, because its faster
+	old_path="$(query "find" "$search")"
+	[ ! "$old_path" ] && { log "  ERROR: there is no '$search' within the database" 0; return; }
+	old_path="$PROFILE_DIR/$old_path"
+	[ ! -e "$old_path" ] && { log "  ERROR: there is no '$old_path' within the profile" 0; return; }
+
+	vprint "search: $search"
+	vprint "new alias: $alias"
+	vprint "new path: $path"
+
+	new_path=
+	[ "$path" ] && new_path="$PROFILE_DIR/$path"
+	[ ! "$dry_run" ] && {
+		vprint "movement: $old_path -> $new_path"
+		query "update" "$search" "$alias" "$path"
+
+		[ "$new_path" ] && {
+			[ ! -e "$(_dirname "$new_path")" ] && mkdir -p "$(_dirname "$new_path")"
+
+			mv $force "$old_path" "$new_path"
+			_recursive_rm "$(_dirname "$old_path")" "$PROFILE_DIR"
+		}
+	}
+}
+
+remove() {
+	entry="$(ts "$1")"
+
+	file=$(query "find" "$entry")
+	[ ! "$file" ] && { log "  ERROR: there is no '$entry' within the database" 0; return; }
+
+	src=$(ts "$PROFILE_DIR/${file}")
+	[ ! -e "$src" ] && {
+		log "  ERROR: there is no '$file' within the profile. Cleaning it up from the db" 0
+		[ ! "$dry_run" ] && query "delete" "" "$file"
+		return
+	}
+
+	vprint "db entry: $file"
+	query "delete" "" "$file"
+
+	[ ! "$dry_run" ] && {
+		# remove base file
+		rm ${force} -r "$src"
+		_recursive_rm "$(_dirname "$src")" "$PROFILE_DIR"
+	}
+}
+
+add() {
+	entry="$(ts "$1")"
+
+	file=
+	path="$(ts "${entry%:*}")"
+	alias=${entry#*:}
+
+	[ "$path" = "$alias" ] && alias="${entry##*/}"
+
+	[ -d "$path" ] || {
+		file=/"${path##*/}"
+		path=$(_dirname "$path")
+	}
+	{
+		path=$(cd -- "$path" 2>&1 && pwd)$file
+	}
+
+	# shellcheck disable=SC2181
+	[ $? -ne 0 ] && { log "  ERROR: failed to determine realpath of '$1'" 0; return; }
+
+	file=$(printf %s\\n "/${path#"${path%%[!/]*}"}")
+	[ ! -e "$file" ] && { log "  ERROR: file '$file' does not exist" 0; return; }
+
+	new_path="$(_dirname "${PROFILE_DIR}/$(_get_clean_file "$file")")"
+
+	vprint "source: $file"
+	vprint "destination: $new_path"
+	vprint "storage: $alias -> $(_get_clean_file "$file")"
+
+	[ ! "$dry_run" ] && {
+		[ ! -e "$new_path" ] && mkdir -p "$new_path"
+		[ "$force" ] && rm -r "${PROFILE_DIR:?}/$(_get_clean_file "$file")"
+		mv $force "$file" "$new_path"
+		query "insert" "$alias" "$(_get_clean_file "$file")"
+	}
+}
+
+copy_move() {
+	op="$1"
+	if [ "$3" ]; then # assume path was read from db file already
+		_alias="$(ts "$2")"
+		_path="$(ts "$3")"
+	else
+		_alias="$(query "find" "$(ts "$2")" "alias")"
+		_path="$(query "find" "$(ts "$2")")"
+		[ ! "$_path" ] && { log "  ERROR: there is no '$(ts "$2")' within the database" 0; return; }
+	fi
+
+	src="$PROFILE_DIR/${_path}"
+	[ ! -e "$src" ] && {
+		log "  ERROR: there is no '$_path' within the profile. Cleaning it up from the db" 0
+		[ ! "$dry_run" ] && query "delete" "" "$_path"
+		return
+	}
+
+	[ ! "$DOTMAN_ANOTHER_PROFILE" ] && { log "  ERROR: did not specify which other profile to use. Please provide it with '--other'" 0; return; }
+
+	dest="${DOTMAN_SOURCE}/${PROFILES_DIR}${DOTMAN_ANOTHER_PROFILE}/${_path}"
+	new_path="$(_dirname "$dest")"
+
+	vprint "src: $src"
+	vprint "dest: $dest"
+
+	[ ! "$dry_run" ] && {
+		[ ! -e "$new_path" ] && mkdir -p "$new_path"
+		if [ -e "$dest" ]; then
+			if [ "$force" ]; then
+				rm -r "$dest"
+			else
+				log "  ERROR: there is already a file at desination '$dest'. Try using --force" 0
+				return
+			fi
+		fi
+
+		_DOTMAN_PROFILE="$DOTMAN_PROFILE"
+
+		if [ "$op" = "copy" ]; then
+			cp "$src" "$dest"
+		elif [ "$op" = "move" ]; then
+			query "delete" "" "$_path"
+			mv "$src" "$dest"
+		fi
+
+		vprint "entry: $_alias -> $_path"
+		DOTMAN_PROFILE="$DOTMAN_ANOTHER_PROFILE"
+		query "insert" "$_alias" "$_path"
+		DOTMAN_PROFILE="$_DOTMAN_PROFILE"
+	}
+}
+
+status() {
+	target="$1"
+
+	_found_profile=
+	__performed=
+	_TMP_DOTMAN_DB="$TMP_DOTMAN_DB"
+	while read -r alias path; do
+		[ "$_found_profile" ] && [ ! "$__performed" ] && {
+			if [ "$alias" = "" ] && [ "$path" = "" ]; then
+				__performed=true
+			else
+				src="${DOTMAN_SOURCE}/${PROFILES_DIR}${target}/${path}"
+				dest="${DOTMAN_DESTINATION:?}/${path}"
+				src_status="G"
+				dest_status="G"
+
+				[ ! -e "$src" ] && {
+					src_status="B"
+					[ ! "$dry_run" ] && query "delete" "" "$path"
+				}
+				[ ! -e "$dest" ] && dest_status="B"
+				[ -L "$dest" ] && {
+					if [ "$(_readlink "$dest")" = "$src" ]; then
+						dest_status="L"
+					else
+						dest_status="N"
+					fi
+				}
+
+				print "  [$src_status] [$dest_status] $path -> $dest"
+			fi
+		}
+
+		[ ! "$_found_profile" ] && \
+		[ "$alias" = "$target" ] && \
+		_found_profile=true
+	done << EOF
+$_TMP_DOTMAN_DB
+EOF
+
+	[ ! "$_found_profile" ] && { log "  WARN: could not find profile '$target'" 0; return; }
+}
+
+# reference: https://unix.stackexchange.com/questions/484152/how-to-distinguish-between-a-positional-parameter-and-an-option
+[ $# = 0 ] && printf "%b" "${HELP}" && exit 0 # early exit
+
+# parse positional options
+while [ $# -gt 0 ]; do case $1 in
+	-p|--profile)
+		check_param "--profile" "$2"
+		DOTMAN_PROFILE=$(ts "$2"); shift
+	;;
+	-s|--source)
+		check_param "--source" "$2"
+		DOTMAN_SOURCE=$(ts "$2"); shift
+	;;
+	-d|--destination)
+		check_param "--destination" "$2"
+		[ ! -d "$2" ] && log "ERROR: there is no destination directory '$2'"
+		DOTMAN_DESTINATION=$(ts "$2"); shift
+	;;
+	-r|--replace)
+		check_param "--replace" "$2"
+		DOTMAN_REPLACE=$(ts "$2"); shift
+	;;
+	-a|--another)
+		check_param "--other" "$2"
+		DOTMAN_ANOTHER_PROFILE=$(ts "$2"); shift
+	;;
+	-c|--copy) copy=true ;;
+	-f|--force) force="--force" ;;
+	-n|--dry-run) dry_run=true ;;
+	-v|--verbose) verbose=true ;;
+	-h|--help) printf "%b" "${HELP}"; exit 0 ;;
+	--) shift; break ;;
+	-?*) log "WARN: unknown option '$1'" 0 ;;
+	*) break ;;
+esac; [ "$1" != "" ] && shift; done
+
+# create root dir and database
+[ ! -f "${DOTMAN_SOURCE:?}/dotman.db" ] && {
+	mkdir -p "${DOTMAN_SOURCE}"
+	printf "" > "${DOTMAN_SOURCE}/dotman.db"
+}
+
+# create profiles dir and current profile
+[ -n "$DOTMAN_PROFILES_DIR" ] && \
+	PROFILES_DIR="${DOTMAN_PROFILES_DIR}/"
+
+PROFILE_DIR="$(ts "${DOTMAN_SOURCE}/${PROFILES_DIR}${DOTMAN_PROFILE}")"
+[ ! -d "$PROFILE_DIR" ] && mkdir -p "$PROFILE_DIR"
+
+# load database
+if [ ! "$TMP_DOTMAN_DB" ]; then
+	while read -r LINE; do
+		TMP_DOTMAN_DB="$TMP_DOTMAN_DB$LINE$nl"
+	done < "${DOTMAN_SOURCE}/dotman.db"
+
+	ORIGINAL_DOTMAN_DB="$TMP_DOTMAN_DB"
+fi
+
+# parse commands
+while [ $# -gt 0 ]; do case $1 in
+	add)
+		check_param "add" "$2"
+		while [ $# -ne 1 ] && [ "$2" != "--" ]; do
+			shift; print "adding ${1%:*}"; add "$1"
+		done
+	;;
+	remove)
+		check_param "remove" "$2"
+		while [ $# -ne 1 ] && [ "$2" != "--" ]; do
+			shift; print "removing $1"; remove "$1"
+		done
+	;;
+	update)
+		check_param "update" "$2"
+		while [ $# -ne 1 ] && [ "$2" != "--" ]; do
+			shift
+			entry=${1%\?*}; entry=${entry%:*}
+			print "updating $entry"; update "$1"
+		done
+	;;
+	status)
+		did_status=
+		while [ $# -ne 1 ] && [ "$2" != "--" ]; do
+			did_status=true
+			shift; print "checking profile '$1'"; status "$1"
+		done
+		
+		[ ! "$did_status" ] && print "checking profile '$DOTMAN_PROFILE'" && status "$DOTMAN_PROFILE"
+	;;
+	install)
+		did_install=
+		while [ $# -ne 1 ] && [ "$2" != "--" ]; do
+			did_install=true
+			shift; print "installing $1"; install "$1"
+		done
+
+		[ ! "$did_install" ] && {
+			print "installing profile '${DOTMAN_PROFILE}'"
+
+			_performed=
+			_found_profile=
+			while read -r alias path; do
+				[ "$_found_profile" ] && [ ! "$_performed" ] && {
+					if [ "$alias" = "" ] && [ "$path" = "" ]; then
+						_performed=true
+					else
+						print "installing $path"
+						install "" "$path"
+					fi
+				}
+
+				[ ! "$_found_profile" ] && \
+				[ "$alias" = "${DOTMAN_PROFILE}" ] && \
+				_found_profile=true
+			done << EOF
+$TMP_DOTMAN_DB
+EOF
+		}
+	;;
+	uninstall)
+		did_uninstall=
+		while [ $# -ne 1 ] && [ "$2" != "--" ]; do
+			did_uninstall=true
+			shift; print "uninstalling $1"; uninstall "$1"
+		done
+
+		[ ! "$did_uninstall" ] && {
+			print "uninstalling profile '${DOTMAN_PROFILE}'"
+
+			_performed=
+			_found_profile=
+			while read -r alias path; do
+				[ "$_found_profile" ] && [ ! "$_performed" ] && {
+					if [ "$alias" = "" ] && [ "$path" = "" ]; then
+						_performed=true
+					else
+						print "uninstalling $path"
+						uninstall "" "$path"
+					fi
+				}
+
+				[ ! "$_found_profile" ] && \
+				[ "$alias" = "${DOTMAN_PROFILE}" ] && \
+				_found_profile=true
+			done << EOF
+$TMP_DOTMAN_DB
+EOF
+		}
+	;;
+	copy)
+		did_copy=
+		while [ $# -ne 1 ] && [ "$2" != "--" ]; do
+			did_copy=true
+			shift; print "copying $1"; copy_move "copy" "$1"
+		done
+
+		[ ! "$did_copy" ] && {
+			print "copying profile '${DOTMAN_PROFILE}'"
+
+			_performed=
+			_found_profile=
+			while read -r alias path; do
+				[ "$_found_profile" ] && [ ! "$_performed" ] && {
+					if [ "$alias" = "" ] && [ "$path" = "" ]; then
+						_performed=true
+					else
+						print "copying $path"
+						copy_move "copy" "$alias" "$path"
+					fi
+				}
+
+				[ ! "$_found_profile" ] && \
+				[ "$alias" = "${DOTMAN_PROFILE}" ] && \
+				_found_profile=true
+			done << EOF
+$TMP_DOTMAN_DB
+EOF
+		}
+	;;
+	move)
+		did_move=
+		while [ $# -ne 1 ] && [ "$2" != "--" ]; do
+			did_move=true
+			shift; print "moving $1"; copy_move "move" "$1"
+		done
+
+		[ ! "$did_move" ] && {
+			print "moving profile '${DOTMAN_PROFILE}'"
+
+			_performed=
+			_found_profile=
+			while read -r alias path; do
+				[ "$_found_profile" ] && [ ! "$_performed" ] && {
+					if [ "$alias" = "" ] && [ "$path" = "" ]; then
+						_performed=true
+					else
+						print "moving $path"
+						copy_move "move" "$alias" "$path"
+					fi
+				}
+
+				[ ! "$_found_profile" ] && \
+				[ "$alias" = "${DOTMAN_PROFILE}" ] && \
+				_found_profile=true
+			done << EOF
+$TMP_DOTMAN_DB
+EOF
+		}
+	;;
+	view) printf "%s" "$TMP_DOTMAN_DB" ;;
+	--) shift; break ;;
+	*) log "WARN: unknown command '$1'" 0 ;;
+esac; [ "$1" != "" ] && shift; done
+
+# write changes to database
+if [ "$TMP_DOTMAN_DB" != "$ORIGINAL_DOTMAN_DB" ] && [ ! "$dry_run" ]; then
+	printf "%s" "${TMP_DOTMAN_DB}" > "${DOTMAN_SOURCE}/dotman.db"
+fi

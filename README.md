@@ -38,6 +38,8 @@ $ dotman status      # checks the status of each file in the profile and their d
 
 The tool may be configured through either environment variables or CLI options.
 
+&nbsp;
+
 ### Bootstrapping
 
 The following one-liner will download `dotman` and install it under `/usr/local/bin` (requires `sudo` privileges):
@@ -46,6 +48,8 @@ The following one-liner will download `dotman` and install it under `/usr/local/
 sudo sh -c 'curl https://raw.githubusercontent.com/pocco81/dotman/main/dotman -o /tmp/dotman && chmod +x /tmp/dotman && install /tmp/dotman /usr/local/bin && rm /tmp/dotman'
 ```
 > Note: to uninstall it just run `sudo rm /usr/local/bin/dotman`
+
+&nbsp;
 
 ### Development and Testing
 

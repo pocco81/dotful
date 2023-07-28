@@ -13,9 +13,9 @@ $ dotman --help
 
 But the short TL;DR is:
 ```
-$ dotman add my_file	# adds 'my_file' to the default profile
-$ dotman install		# installs the entire profile
-$ dotman status		# checks the status of each file in the profile and their destinations
+$ dotman add my_file # adds 'my_file' to the default profile
+$ dotman install     # installs the entire profile
+$ dotman status      # checks the status of each file in the profile and their destinations
 ```
 
 The tool may be configured through either environment variables or CLI options.

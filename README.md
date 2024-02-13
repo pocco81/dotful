@@ -45,7 +45,7 @@ The tool may be configured through either environment variables or CLI options.
 The following one-liner will download `dotful` and install it under `/usr/local/bin` (requires `sudo` privileges):
 
 ```shell
-sudo sh -c 'curl https://raw.githubusercontent.com/pocco81/dotful/main/dotful -o /tmp/dotful && chmod +x /tmp/dotful && install /tmp/dotful /usr/local/bin && rm /tmp/dotful'
+sudo curl -L https://raw.githubusercontent.com/pocco81/dotful/main/dotful -o /usr/local/bin/dotful && sudo chmod +x /usr/local/bin/dotful
 ```
 > Note: to uninstall it just run `sudo rm /usr/local/bin/dotful`
 

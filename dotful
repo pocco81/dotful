@@ -4,11 +4,11 @@
 ts() { [ "${1#"${1%?}"}" = "/" ] && printf "%s" "${1%?}" || printf "%s" "$1"; }
 
 # settings
-DOTMAN_SOURCE=$(ts "${DOTMAN_SOURCE:-"$HOME/.dots"}")
-DOTMAN_DESTINATION=$(ts "${DOTMAN_DESTINATION:-"$HOME"}")
-DOTMAN_PROFILE=$(ts "${DOTMAN_PROFILE:-"files"}")
-DOTMAN_REPLACE=$(ts "${DOTMAN_REPLACE:-"$HOME"}")
-DOTMAN_PROFILES_DIR=$(ts "${DOTMAN_PROFILES_DIR:-""}")
+DOTFUL_SOURCE=$(ts "${DOTFUL_SOURCE:-"$HOME/.dots"}")
+DOTFUL_DESTINATION=$(ts "${DOTFUL_DESTINATION:-"$HOME"}")
+DOTFUL_PROFILE=$(ts "${DOTFUL_PROFILE:-"files"}")
+DOTFUL_REPLACE=$(ts "${DOTFUL_REPLACE:-"$HOME"}")
+DOTFUL_PROFILES_DIR=$(ts "${DOTFUL_PROFILES_DIR:-""}")
 
 # manual
 HELP="dotful - dotfiles manager written in POSIX shell
@@ -51,11 +51,11 @@ Options
   -h,--help\t\t   see this message
 
 Defaults:
-  DOTMAN_SOURCE\t\t=\t${DOTMAN_SOURCE}
-  DOTMAN_DESTINATION\t=\t${DOTMAN_DESTINATION}
-  DOTMAN_PROFILE\t=\t${DOTMAN_PROFILE}
-  DOTMAN_REPLACE\t=\t${DOTMAN_REPLACE}
-  DOTMAN_PROFILES_DIR\t=\t${DOTMAN_PROFILES_DIR}
+  DOTFUL_SOURCE\t\t=\t${DOTFUL_SOURCE}
+  DOTFUL_DESTINATION\t=\t${DOTFUL_DESTINATION}
+  DOTFUL_PROFILE\t=\t${DOTFUL_PROFILE}
+  DOTFUL_REPLACE\t=\t${DOTFUL_REPLACE}
+  DOTFUL_PROFILES_DIR\t=\t${DOTFUL_PROFILES_DIR}
 
 Note: when 'ENTRY' is mentioned in the Commands sections, it references either
 the path to the file within the profile or its alias, both of which are stored in the DB.
@@ -151,10 +151,10 @@ _readlink() {
 
 ### aiders
 
-# remove $DOTMAN_REPLACE
+# remove $DOTFUL_REPLACE
 _get_clean_file() {
 	file="$(ts "$1")"
-	printf "%s" "$(replace "$file" "${DOTMAN_REPLACE}/" "")"
+	printf "%s" "$(replace "$file" "${DOTFUL_REPLACE}/" "")"
 }
 
 # recursively delete empty dirs
@@ -268,14 +268,14 @@ query() {
 		}
 
 		[ ! "$found_profile" ] && \
-		[ "$alias" = "${DOTMAN_PROFILE}" ] && \
+		[ "$alias" = "${DOTFUL_PROFILE}" ] && \
 		found_profile=true
 
 		buffer="$buffer$alias$SPACE$path$NL"
 		NL="$nl"
 		SPACE=" "
 	done << EOF
-$TMP_DOTMAN_DB
+$TMP_DOTFUL_DB
 EOF
 
 	[ "$op" = "find" ] && return
@@ -288,12 +288,12 @@ EOF
 
 	if [ "$op" = "insert" ] && [ ! "$found_profile" ]; then
 		[ "$buffer" != "" ] && buffer="$buffer$nl$nl"
-		buffer="${buffer}${DOTMAN_PROFILE}$nl$target $entry"
+		buffer="${buffer}${DOTFUL_PROFILE}$nl$target $entry"
 	fi
 
 	buffer="$buffer$nl$nl"
 
-	TMP_DOTMAN_DB="$buffer"
+	TMP_DOTFUL_DB="$buffer"
 }
 
 uninstall() {
@@ -304,7 +304,7 @@ uninstall() {
 		[ ! "$path" ] && { log "  ERROR: there is no '$(ts "$1")' within the database" 0; return; }
 	fi
 
-	dest="${DOTMAN_DESTINATION:?}/${path}"
+	dest="${DOTFUL_DESTINATION:?}/${path}"
 	[ ! -e "$dest"  ] && { log "  WARN: destination file '$dest' not found" 0; return; }
 
 	vprint "target: $dest"
@@ -316,7 +316,7 @@ uninstall() {
 			rm -r ${force} "$dest"
 		fi
 
-		_recursive_rm "$(_dirname "$dest")" "$DOTMAN_DESTINATION"
+		_recursive_rm "$(_dirname "$dest")" "$DOTFUL_DESTINATION"
 	}
 }
 
@@ -335,7 +335,7 @@ install() {
 		return
 	}
 
-	dest="${DOTMAN_DESTINATION:?}/${path}"
+	dest="${DOTFUL_DESTINATION:?}/${path}"
 	[ ! -e "$(_dirname "$dest")" ] && mkdir -p "$(_dirname "$dest")"
 
 	vprint "source: $src"
@@ -482,9 +482,9 @@ copy_move() {
 		return
 	}
 
-	[ ! "$DOTMAN_ANOTHER_PROFILE" ] && { log "  ERROR: did not specify which other profile to use. Please provide it with '--other'" 0; return; }
+	[ ! "$DOTFUL_ANOTHER_PROFILE" ] && { log "  ERROR: did not specify which other profile to use. Please provide it with '--other'" 0; return; }
 
-	dest="${DOTMAN_SOURCE}/${PROFILES_DIR}${DOTMAN_ANOTHER_PROFILE}/${_path}"
+	dest="${DOTFUL_SOURCE}/${PROFILES_DIR}${DOTFUL_ANOTHER_PROFILE}/${_path}"
 	new_path="$(_dirname "$dest")"
 
 	vprint "src: $src"
@@ -501,7 +501,7 @@ copy_move() {
 			fi
 		fi
 
-		_DOTMAN_PROFILE="$DOTMAN_PROFILE"
+		_DOTFUL_PROFILE="$DOTFUL_PROFILE"
 
 		if [ "$op" = "copy" ]; then
 			cp "$src" "$dest"
@@ -511,9 +511,9 @@ copy_move() {
 		fi
 
 		vprint "entry: $_alias -> $_path"
-		DOTMAN_PROFILE="$DOTMAN_ANOTHER_PROFILE"
+		DOTFUL_PROFILE="$DOTFUL_ANOTHER_PROFILE"
 		query "insert" "$_alias" "$_path"
-		DOTMAN_PROFILE="$_DOTMAN_PROFILE"
+		DOTFUL_PROFILE="$_DOTFUL_PROFILE"
 	}
 }
 
@@ -522,14 +522,14 @@ status() {
 
 	_found_profile=
 	__performed=
-	_TMP_DOTMAN_DB="$TMP_DOTMAN_DB"
+	_TMP_DOTFUL_DB="$TMP_DOTFUL_DB"
 	while read -r alias path; do
 		[ "$_found_profile" ] && [ ! "$__performed" ] && {
 			if [ "$alias" = "" ] && [ "$path" = "" ]; then
 				__performed=true
 			else
-				src="${DOTMAN_SOURCE}/${PROFILES_DIR}${target}/${path}"
-				dest="${DOTMAN_DESTINATION:?}/${path}"
+				src="${DOTFUL_SOURCE}/${PROFILES_DIR}${target}/${path}"
+				dest="${DOTFUL_DESTINATION:?}/${path}"
 				src_status="G"
 				dest_status="G"
 
@@ -554,7 +554,7 @@ status() {
 		[ "$alias" = "$target" ] && \
 		_found_profile=true
 	done << EOF
-$_TMP_DOTMAN_DB
+$_TMP_DOTFUL_DB
 EOF
 
 	[ ! "$_found_profile" ] && { log "  WARN: could not find profile '$target'" 0; return; }
@@ -567,24 +567,24 @@ EOF
 while [ $# -gt 0 ]; do case $1 in
 	-p|--profile)
 		check_param "--profile" "$2"
-		DOTMAN_PROFILE=$(ts "$2"); shift
+		DOTFUL_PROFILE=$(ts "$2"); shift
 	;;
 	-s|--source)
 		check_param "--source" "$2"
-		DOTMAN_SOURCE=$(ts "$2"); shift
+		DOTFUL_SOURCE=$(ts "$2"); shift
 	;;
 	-d|--destination)
 		check_param "--destination" "$2"
 		[ ! -d "$2" ] && log "ERROR: there is no destination directory '$2'"
-		DOTMAN_DESTINATION=$(ts "$2"); shift
+		DOTFUL_DESTINATION=$(ts "$2"); shift
 	;;
 	-r|--replace)
 		check_param "--replace" "$2"
-		DOTMAN_REPLACE=$(ts "$2"); shift
+		DOTFUL_REPLACE=$(ts "$2"); shift
 	;;
 	-a|--another)
 		check_param "--other" "$2"
-		DOTMAN_ANOTHER_PROFILE=$(ts "$2"); shift
+		DOTFUL_ANOTHER_PROFILE=$(ts "$2"); shift
 	;;
 	-c|--copy) copy=true ;;
 	-f|--force) force="--force" ;;
@@ -597,25 +597,25 @@ while [ $# -gt 0 ]; do case $1 in
 esac; [ "$1" != "" ] && shift; done
 
 # create root dir and database
-[ ! -f "${DOTMAN_SOURCE:?}/.dotful.db" ] && {
-	mkdir -p "${DOTMAN_SOURCE}"
-	printf "" > "${DOTMAN_SOURCE}/.dotful.db"
+[ ! -f "${DOTFUL_SOURCE:?}/.dotful.db" ] && {
+	mkdir -p "${DOTFUL_SOURCE}"
+	printf "" > "${DOTFUL_SOURCE}/.dotful.db"
 }
 
 # create profiles dir and current profile
-[ -n "$DOTMAN_PROFILES_DIR" ] && \
-	PROFILES_DIR="${DOTMAN_PROFILES_DIR}/"
+[ -n "$DOTFUL_PROFILES_DIR" ] && \
+	PROFILES_DIR="${DOTFUL_PROFILES_DIR}/"
 
-PROFILE_DIR="$(ts "${DOTMAN_SOURCE}/${PROFILES_DIR}${DOTMAN_PROFILE}")"
+PROFILE_DIR="$(ts "${DOTFUL_SOURCE}/${PROFILES_DIR}${DOTFUL_PROFILE}")"
 [ ! -d "$PROFILE_DIR" ] && mkdir -p "$PROFILE_DIR"
 
 # load database
-if [ ! "$TMP_DOTMAN_DB" ]; then
+if [ ! "$TMP_DOTFUL_DB" ]; then
 	while read -r LINE; do
-		TMP_DOTMAN_DB="$TMP_DOTMAN_DB$LINE$nl"
-	done < "${DOTMAN_SOURCE}/.dotful.db"
+		TMP_DOTFUL_DB="$TMP_DOTFUL_DB$LINE$nl"
+	done < "${DOTFUL_SOURCE}/.dotful.db"
 
-	ORIGINAL_DOTMAN_DB="$TMP_DOTMAN_DB"
+	ORIGINAL_DOTFUL_DB="$TMP_DOTFUL_DB"
 fi
 
 # parse commands
@@ -647,7 +647,7 @@ while [ $# -gt 0 ]; do case $1 in
 			shift; print "checking profile '$1'"; status "$1"
 		done
 		
-		[ ! "$did_status" ] && print "checking profile '$DOTMAN_PROFILE'" && status "$DOTMAN_PROFILE"
+		[ ! "$did_status" ] && print "checking profile '$DOTFUL_PROFILE'" && status "$DOTFUL_PROFILE"
 	;;
 	install)
 		did_install=
@@ -657,7 +657,7 @@ while [ $# -gt 0 ]; do case $1 in
 		done
 
 		[ ! "$did_install" ] && {
-			print "installing profile '${DOTMAN_PROFILE}'"
+			print "installing profile '${DOTFUL_PROFILE}'"
 
 			_performed=
 			_found_profile=
@@ -672,10 +672,10 @@ while [ $# -gt 0 ]; do case $1 in
 				}
 
 				[ ! "$_found_profile" ] && \
-				[ "$alias" = "${DOTMAN_PROFILE}" ] && \
+				[ "$alias" = "${DOTFUL_PROFILE}" ] && \
 				_found_profile=true
 			done << EOF
-$TMP_DOTMAN_DB
+$TMP_DOTFUL_DB
 EOF
 		}
 	;;
@@ -687,7 +687,7 @@ EOF
 		done
 
 		[ ! "$did_uninstall" ] && {
-			print "uninstalling profile '${DOTMAN_PROFILE}'"
+			print "uninstalling profile '${DOTFUL_PROFILE}'"
 
 			_performed=
 			_found_profile=
@@ -702,10 +702,10 @@ EOF
 				}
 
 				[ ! "$_found_profile" ] && \
-				[ "$alias" = "${DOTMAN_PROFILE}" ] && \
+				[ "$alias" = "${DOTFUL_PROFILE}" ] && \
 				_found_profile=true
 			done << EOF
-$TMP_DOTMAN_DB
+$TMP_DOTFUL_DB
 EOF
 		}
 	;;
@@ -717,7 +717,7 @@ EOF
 		done
 
 		[ ! "$did_copy" ] && {
-			print "copying profile '${DOTMAN_PROFILE}'"
+			print "copying profile '${DOTFUL_PROFILE}'"
 
 			_performed=
 			_found_profile=
@@ -732,10 +732,10 @@ EOF
 				}
 
 				[ ! "$_found_profile" ] && \
-				[ "$alias" = "${DOTMAN_PROFILE}" ] && \
+				[ "$alias" = "${DOTFUL_PROFILE}" ] && \
 				_found_profile=true
 			done << EOF
-$TMP_DOTMAN_DB
+$TMP_DOTFUL_DB
 EOF
 		}
 	;;
@@ -747,7 +747,7 @@ EOF
 		done
 
 		[ ! "$did_move" ] && {
-			print "moving profile '${DOTMAN_PROFILE}'"
+			print "moving profile '${DOTFUL_PROFILE}'"
 
 			_performed=
 			_found_profile=
@@ -762,19 +762,19 @@ EOF
 				}
 
 				[ ! "$_found_profile" ] && \
-				[ "$alias" = "${DOTMAN_PROFILE}" ] && \
+				[ "$alias" = "${DOTFUL_PROFILE}" ] && \
 				_found_profile=true
 			done << EOF
-$TMP_DOTMAN_DB
+$TMP_DOTFUL_DB
 EOF
 		}
 	;;
-	view) printf "%s" "$TMP_DOTMAN_DB" ;;
+	view) printf "%s" "$TMP_DOTFUL_DB" ;;
 	--) shift; break ;;
 	*) log "WARN: unknown command '$1'" 0 ;;
 esac; [ "$1" != "" ] && shift; done
 
 # write changes to database
-if [ "$TMP_DOTMAN_DB" != "$ORIGINAL_DOTMAN_DB" ] && [ ! "$dry_run" ]; then
-	printf "%s" "${TMP_DOTMAN_DB}" > "${DOTMAN_SOURCE}/.dotful.db"
+if [ "$TMP_DOTFUL_DB" != "$ORIGINAL_DOTFUL_DB" ] && [ ! "$dry_run" ]; then
+	printf "%s" "${TMP_DOTFUL_DB}" > "${DOTFUL_SOURCE}/.dotful.db"
 fi

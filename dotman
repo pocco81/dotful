@@ -11,13 +11,13 @@ DOTMAN_REPLACE=$(ts "${DOTMAN_REPLACE:-"$HOME"}")
 DOTMAN_PROFILES_DIR=$(ts "${DOTMAN_PROFILES_DIR:-""}")
 
 # manual
-HELP="dotman - dotfiles manager written in POSIX shell
+HELP="dotful - dotfiles manager written in POSIX shell
 
 About: manages dotfiles through profiles, which are directories that store the dotfiles.
 There is a local database (plain text file) that stores each entry's destination
 and alias.
 
-Usage: dotman <options> <option-arguments> [command] [operand] 
+Usage: dotful <options> <option-arguments> [command] [operand] 
 
 Commands:
   add\t\tadds files to the database and profile
@@ -597,9 +597,9 @@ while [ $# -gt 0 ]; do case $1 in
 esac; [ "$1" != "" ] && shift; done
 
 # create root dir and database
-[ ! -f "${DOTMAN_SOURCE:?}/.dotman.db" ] && {
+[ ! -f "${DOTMAN_SOURCE:?}/.dotful.db" ] && {
 	mkdir -p "${DOTMAN_SOURCE}"
-	printf "" > "${DOTMAN_SOURCE}/.dotman.db"
+	printf "" > "${DOTMAN_SOURCE}/.dotful.db"
 }
 
 # create profiles dir and current profile
@@ -613,7 +613,7 @@ PROFILE_DIR="$(ts "${DOTMAN_SOURCE}/${PROFILES_DIR}${DOTMAN_PROFILE}")"
 if [ ! "$TMP_DOTMAN_DB" ]; then
 	while read -r LINE; do
 		TMP_DOTMAN_DB="$TMP_DOTMAN_DB$LINE$nl"
-	done < "${DOTMAN_SOURCE}/.dotman.db"
+	done < "${DOTMAN_SOURCE}/.dotful.db"
 
 	ORIGINAL_DOTMAN_DB="$TMP_DOTMAN_DB"
 fi
@@ -776,5 +776,5 @@ esac; [ "$1" != "" ] && shift; done
 
 # write changes to database
 if [ "$TMP_DOTMAN_DB" != "$ORIGINAL_DOTMAN_DB" ] && [ ! "$dry_run" ]; then
-	printf "%s" "${TMP_DOTMAN_DB}" > "${DOTMAN_SOURCE}/.dotman.db"
+	printf "%s" "${TMP_DOTMAN_DB}" > "${DOTMAN_SOURCE}/.dotful.db"
 fi

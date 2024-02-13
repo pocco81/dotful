@@ -4,11 +4,11 @@ PL=/tmp/_home
 .DEFAULT_GOAL := install
 
 install:
-	chmod +x dotman
-	install dotman $(BIN)
+	chmod +x dotful
+	install dotful $(BIN)
 
 uninstall:
-	rm $(BIN)/dotman
+	rm $(BIN)/dotful
 
 playground:
 	@if [ -d "$(PL)" ]; then printf "removing old dir\n" && rm -r "$(PL)"; fi
@@ -22,5 +22,5 @@ playground:
 	touch $(PL)/.local/share/fonts/ter-123b $(PL)/.local/share/fonts/ter-235b $(PL)/.local/share/fonts/ter-284b
 	touch $(PL)/.profile $(PL)/.logout $(PL)/.inputrc $(PL)/.xinitrc $(PL)/.xresources $(PL)/.xserverrc $(PL)/.rc
 
-	@printf "\ngrab this alias to use dotman within the playground:\n"
-	@printf "alias dotman=\"dotman --source $(PL)/.dots --destination $(PL) --replace $(PL)\"\n"
+	@printf "\ngrab this alias to use dotful within the playground:\n"
+	@printf "alias dotful=\"dotful --source $(PL)/.dots --destination $(PL) --replace $(PL)\"\n"

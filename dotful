@@ -172,8 +172,8 @@ _get_clean_file() {
 	file="$(ts "$1")"
 	clean_file="$(replace "$file" "${DOTFUL_USER_HOME}/" "")"
 
-	if [ "${clean_file#*"$root_dir"}" != "$clean_file" ]; then
-		# file is not located within $DOTFUL_USER_HOME, so it must be under root
+	# file is under root
+	if [ "$clean_file" = "$file" ]; then
 		if [ "$root_dir" != "/" ]; then
 			clean_file="$(replace "$file" "$root_dir" "")"
 		fi
@@ -182,10 +182,6 @@ _get_clean_file() {
 
 	printf "%s" "$clean_file"
 }
-
-# _is_file_within_home() {
-#
-#}
 
 # recursively delete empty dirs
 _recursive_rm() {
@@ -510,12 +506,7 @@ add() {
 	[ ! -e "$file" ] && { log "  ERROR: file '$file' does not exist" 0; return; }
 	[ -L "$file" ] && { log "  ERROR: file '$file' is a symlink" 0; return;  }
 	
-
 	clean_file="$(_get_clean_file "$file")" 
-
-	# echo "-----> $clean_file"
-	# echo "-----> ${PROFILE_DIR}/$clean_file"
-
 	new_path="$(_dirname "${PROFILE_DIR}/${clean_file}")"
 
 	vprint "source: $file"

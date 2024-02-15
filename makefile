@@ -1,5 +1,5 @@
 BIN=/usr/local/bin
-PL=/tmp/_home
+PL=/tmp/_root/home/user0
 
 .DEFAULT_GOAL := install
 
@@ -10,11 +10,14 @@ install:
 uninstall:
 	rm $(BIN)/dotful
 
+link:
+	ln -s $(PWD)/dotful ${HOME}/.local/bin/dotful
+
 playground:
 	@if [ -d "$(PL)" ]; then printf "removing old dir\n" && rm -r "$(PL)"; fi
 	@mkdir -p $(PL)
 
-	@printf "creating dummy files within %s\n\n" "$(PL)"
+	@printf "creating dummy files within %s...\n\n" "$(PL)"
 
 	mkdir -p $(PL)/.dots $(PL)/.config $(PL)/.local/share
 	mkdir -p $(PL)/.config/gtk $(PL)/.config/vlc $(PL)/.config/nvim
@@ -23,4 +26,4 @@ playground:
 	touch $(PL)/.profile $(PL)/.logout $(PL)/.inputrc $(PL)/.xinitrc $(PL)/.xresources $(PL)/.xserverrc $(PL)/.rc
 
 	@printf "\ngrab this alias to use dotful within the playground:\n"
-	@printf "alias dotful=\"dotful --source $(PL)/.dots --destination $(PL) --replace $(PL)\"\n"
+	@printf "alias dotful=\"dotful --source $(PL)/.dots --destination $(PL) --user-home $(PL)\"\n"

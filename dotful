@@ -3,11 +3,13 @@
 # trim trailing /
 ts() { [ "${1#"${1%?}"}" = "/" ] && printf "%s" "${1%?}" || printf "%s" "$1"; }
 
+_HOME="/home/$(logname)"
+
 # settings
-DOTFUL_SOURCE=$(ts "${DOTFUL_SOURCE:-"$HOME/.dots"}")
-DOTFUL_DESTINATION=$(ts "${DOTFUL_DESTINATION:-"$HOME"}")
+DOTFUL_SOURCE=$(ts "${DOTFUL_SOURCE:-"$_HOME/.dots"}")
+DOTFUL_DESTINATION=$(ts "${DOTFUL_DESTINATION:-"$_HOME"}")
 DOTFUL_PROFILE=$(ts "${DOTFUL_PROFILE:-"files"}")
-DOTFUL_REPLACE=$(ts "${DOTFUL_REPLACE:-"$HOME"}")
+DOTFUL_USER_HOME=$(ts "${DOTFUL_USER_HOME:-"$_HOME"}")
 DOTFUL_PROFILES_DIR=$(ts "${DOTFUL_PROFILES_DIR:-""}")
 
 # manual
@@ -42,7 +44,7 @@ Options
   -p,--profile [str]\t   specify an alternative profile
   -s,--source [path]\t   specify an alternative source directory
   -d,--destination [path]  specify an alternative destination directory
-  -r,--replace [path]\t   specify an alternative replacement string (used when adding files)
+  -u,--user-home [path]\t   specify an alternative home directory (e.g. /home/your_user, or /tmp/_root/home/user)
   -a,--another [str]\t   set the \"destination\" profile for the 'move' and 'copy' operations
   -c,--copy\t\t   copies files instead of symlinking them (only applicable to 'install')
   -f,--force\t\t   force operations (i.e. install, uninstall, ...) 
@@ -54,11 +56,14 @@ Defaults:
   DOTFUL_SOURCE\t\t=\t${DOTFUL_SOURCE}
   DOTFUL_DESTINATION\t=\t${DOTFUL_DESTINATION}
   DOTFUL_PROFILE\t=\t${DOTFUL_PROFILE}
-  DOTFUL_REPLACE\t=\t${DOTFUL_REPLACE}
+  DOTFUL_USER_HOME\t=\t${DOTFUL_USER_HOME}
   DOTFUL_PROFILES_DIR\t=\t${DOTFUL_PROFILES_DIR}
 
-Note: when 'ENTRY' is mentioned in the Commands sections, it references either
-the path to the file within the profile or its alias, both of which are stored in the DB.
+Footnotes:
++ when 'ENTRY' is mentioned in the Commands sections, it references either
+  the path to the file within the profile or its alias, both of which are stored in the DB.
++ there can't be a directory named '_root' at any profile's root directory, because that's
+  where dotful stores files that should go at the destinations' root.
 "
 
 # runtime vars
@@ -67,6 +72,7 @@ dry_run=
 force=
 max_recursions=4
 copy=
+root_dir="/"
 nl="
 "
 
@@ -96,20 +102,30 @@ check_param() {
 replace() {
     RIGHT=$1
     buf=
+    replace_first_only=$4
 
-	while [ -n "$RIGHT" ]; do
-		LEFT=${RIGHT%%"$2"*}
+    while [ -n "$RIGHT" ]; do
+        LEFT=${RIGHT%%"$2"*}
 
-		if [ "$LEFT" = "$RIGHT" ]; then
-			buf=$buf$RIGHT
-			printf "%s" "$buf"; return
-		fi
+        if [ "$LEFT" = "$RIGHT" ]; then
+            buf=$buf$RIGHT
+            printf "%s" "$buf"
+            return
+        fi
 
-		buf=$buf$LEFT$3
-		RIGHT=${RIGHT#*"$2"}
-	done
+        if [ "$replace_first_only" = "" ]; then
+            buf=$buf$LEFT$3
+        else
+            buf=$buf$LEFT$3
+            RIGHT=${RIGHT#*"$2"}
+            printf "%s" "$buf$RIGHT"
+            return
+        fi
 
-	printf "%s" "$buf"
+        RIGHT=${RIGHT#*"$2"}
+    done
+
+    printf "%s" "$buf"
 }
 
 _dirname() {
@@ -151,11 +167,25 @@ _readlink() {
 
 ### aiders
 
-# remove $DOTFUL_REPLACE
+# remove $DOTFUL_USER_HOME
 _get_clean_file() {
 	file="$(ts "$1")"
-	printf "%s" "$(replace "$file" "${DOTFUL_REPLACE}/" "")"
+	clean_file="$(replace "$file" "${DOTFUL_USER_HOME}/" "")"
+
+	if [ "${clean_file#*"$root_dir"}" != "$clean_file" ]; then
+		# file is not located within $DOTFUL_USER_HOME, so it must be under root
+		if [ "$root_dir" != "/" ]; then
+			clean_file="$(replace "$file" "$root_dir" "")"
+		fi
+		clean_file="_root${file}"
+	fi
+
+	printf "%s" "$clean_file"
 }
+
+# _is_file_within_home() {
+#
+#}
 
 # recursively delete empty dirs
 _recursive_rm() {
@@ -304,7 +334,19 @@ uninstall() {
 		[ ! "$path" ] && { log "  ERROR: there is no '$(ts "$1")' within the database" 0; return; }
 	fi
 
-	dest="${DOTFUL_DESTINATION:?}/${path}"
+	dest="${DOTFUL_DESTINATION:?}/"
+
+	# remove "_root" marker and adjust $dest dir if necessary
+	removed_root="$(replace "$path" "_root/" "" "true")"
+	if [ "$path" != "$removed_root" ]; then
+
+		solely_home="$(replace "$DOTFUL_USER_HOME" "$root_dir" "" "true")"
+		path="$removed_root"
+		dest="$(replace "$dest$path" "$solely_home/" "" "true")"
+	else
+		dest="${dest}${path}"
+	fi
+
 	[ ! -e "$dest"  ] && { log "  WARN: destination file '$dest' not found" 0; return; }
 
 	vprint "target: $dest"
@@ -327,7 +369,7 @@ install() {
 		path="$(query "find" "$(ts "$1")")"
 		[ ! "$path" ] && { log "  ERROR: there is no '$(ts "$1")' within the database" 0; return; }
 	fi
-
+	
 	src="$PROFILE_DIR/${path}"
 	[ ! -e "$src" ] && {
 		log "  ERROR: there is no '$path' within the profile. Cleaning it up from the db" 0
@@ -335,12 +377,27 @@ install() {
 		return
 	}
 
-	dest="${DOTFUL_DESTINATION:?}/${path}"
-	[ ! -e "$(_dirname "$dest")" ] && mkdir -p "$(_dirname "$dest")"
+	dest="${DOTFUL_DESTINATION:?}/"
+
+	# remove "_root" marker and adjust $dest dir if necessary
+	removed_root="$(replace "$path" "_root/" "" "true")"
+	if [ "$path" != "$removed_root" ]; then
+
+		solely_home="$(replace "$DOTFUL_USER_HOME" "$root_dir" "" "true")"
+		path="$removed_root"
+		dest="$(replace "$dest$path" "$solely_home/" "" "true")"
+	else
+		dest="${dest}${path}"
+	fi
+
+	[ ! -e "$(_dirname "$dest")" ] && [ ! "$dry_run" ] && {
+		destination_dir="$(_dirname "$dest")"
+		vprint "creating destination directory: $destination_dir"
+		mkdir -p "$destination_dir"
+	}
 
 	vprint "source: $src"
 	vprint "destination: $dest"
-
 
 	[ ! "$dry_run" ] && {
 		[ "$force" ] && {
@@ -447,20 +504,31 @@ add() {
 	# shellcheck disable=SC2181
 	[ $? -ne 0 ] && { log "  ERROR: failed to determine realpath of '$1'" 0; return; }
 
-	file=$(printf %s\\n "/${path#"${path%%[!/]*}"}")
-	[ ! -e "$file" ] && { log "  ERROR: file '$file' does not exist" 0; return; }
 
-	new_path="$(_dirname "${PROFILE_DIR}/$(_get_clean_file "$file")")"
+	file=$(printf %s\\n "/${path#"${path%%[!/]*}"}")
+
+	[ ! -e "$file" ] && { log "  ERROR: file '$file' does not exist" 0; return; }
+	[ -L "$file" ] && { log "  ERROR: file '$file' is a symlink" 0; return;  }
+	
+
+	clean_file="$(_get_clean_file "$file")" 
+
+	# echo "-----> $clean_file"
+	# echo "-----> ${PROFILE_DIR}/$clean_file"
+
+	new_path="$(_dirname "${PROFILE_DIR}/${clean_file}")"
 
 	vprint "source: $file"
 	vprint "destination: $new_path"
-	vprint "storage: $alias -> $(_get_clean_file "$file")"
+	vprint "storage: $alias -> $clean_file"
 
 	[ ! "$dry_run" ] && {
 		[ ! -e "$new_path" ] && mkdir -p "$new_path"
-		[ "$force" ] && rm -r "${PROFILE_DIR:?}/$(_get_clean_file "$file")"
+		[ "$force" ] && rm -r "${PROFILE_DIR:?}/${clean_file}"
+
 		mv $force "$file" "$new_path"
-		query "insert" "$alias" "$(_get_clean_file "$file")"
+		query "insert" "$alias" "$clean_file"
+		# [ $? -eq 0 ] && 
 	}
 }
 
@@ -578,9 +646,17 @@ while [ $# -gt 0 ]; do case $1 in
 		[ ! -d "$2" ] && log "ERROR: there is no destination directory '$2'"
 		DOTFUL_DESTINATION=$(ts "$2"); shift
 	;;
-	-r|--replace)
+	-u|--user-home)
 		check_param "--replace" "$2"
-		DOTFUL_REPLACE=$(ts "$2"); shift
+		DOTFUL_USER_HOME=$(ts "$2")
+
+		# remove "/home/user"
+		root_dir=$(_dirname "$(_dirname "${DOTFUL_USER_HOME}")")
+
+		# append "/" if missing
+		[ "${root_dir#"${root_dir%?}"}" != "/" ] && root_dir="${root_dir}/"
+
+		shift
 	;;
 	-a|--another)
 		check_param "--other" "$2"

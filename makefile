@@ -13,6 +13,9 @@ uninstall:
 link:
 	ln -s $(PWD)/dotful ${HOME}/.local/bin/dotful
 
+unlink:
+	rm ${HOME}/.local/bin/dotful
+
 playground:
 	@if [ -d "$(PL)" ]; then printf "removing old dir\n" && rm -r "$(PL)"; fi
 	@mkdir -p $(PL)

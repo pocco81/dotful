@@ -60,10 +60,13 @@ Defaults:
   DOTFUL_PROFILES_DIR\t=\t${DOTFUL_PROFILES_DIR}
 
 Footnotes:
-+ when 'ENTRY' is mentioned in the Commands sections, it references either
++ When 'ENTRY' is mentioned in the Commands sections, it references either
   the path to the file within the profile or its alias, both of which are stored in the DB.
-+ there can't be a directory named '_root' at any profile's root directory, because that's
++ There can't be a directory named '_root' at any profile's root directory, because that's
   where dotful stores files that should go at the destinations' root.
++ When running 'dotful status' you might notice that some directories/files, regardless of being
+  installed, don't appear like so. That's because dotful does not have the appropriate permissions;
+  you will need to elevate them.
 "
 
 # runtime vars
@@ -589,6 +592,9 @@ status() {
 			else
 				src="${DOTFUL_SOURCE}/${PROFILES_DIR}${target}/${path}"
 				dest="${DOTFUL_DESTINATION:?}/${path}"
+
+				dest="$(replace "$dest" "${DOTFUL_USER_HOME}/_root" "")"
+				
 				src_status="G"
 				dest_status="G"
 
